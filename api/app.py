@@ -1,97 +1,72 @@
-﻿import json
-import os
-from flask import Flask, request, jsonify
+﻿from flask import Flask, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+import json, os
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DRUG_JSON = os.path.join(BASE_DIR, 'drug_adverse.json')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:1234@localhost:5432/postgres'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
 
-# --- 模擬臨床數據 (保留不變) ---
-PATIENTS_DB = [
-    {"id": "P001", "name": "王小明", "info": "(男/68)", "na": "128", "k": "4.5", "room": "802-1", "status": "危急"},
-    {"id": "P002", "name": "李大同", "info": "(男/72)", "na": "138", "k": "4.2", "room": "805-2", "status": "觀察中"}
-]
+class Patient(db.Model):
+    __tablename__ = 'patients'; __table_args__ = {'schema': 'hosp'}
+    patient_id = db.Column(db.Integer, primary_key=True)
+    gender = db.Column(db.String(10)); anchor_age = db.Column(db.Integer)
 
-ADMISSIONS_DB = {
-    "P001": [
-        { "id": "ADM-001", "date": "2026/09/10 - 09/30 (本次住院)" },
-        { "id": "ADM-002", "date": "2025/11/12 - 11/28 (過往紀錄)" }
-    ]
-}
-
-CLINICAL_DATA = {
-    "ADM-001": {
-        "trends": [{"date": f"09/{10+i}", "na": 142 - i*0.8, "k": 3.6 + i*0.12} for i in range(21)],
-        "gantt": [
-            {"name": "FUROSEMIDE (LASIX)", "type": "Na+ Impact", "startIdx": 0, "endIdx": 15, "startDate": "09/10", "endDate": "09/25", "color": "#3B82F6", "impact": "138 -> 128", "level": "高度相關"},
-            {"name": "LISINOPRIL", "type": "K+ Impact", "startIdx": 5, "endIdx": 12, "startDate": "09/15", "endDate": "09/22", "color": "#EF4444", "impact": "3.5 -> 5.5", "level": "中度相關"}
-        ],
-        "logs": [
-            {"name": "FUROSEMIDE (LASIX)", "start": "09/10 08:00", "end": "09/25 10:00", "dose": ["40 mg IV q12h", "20 mg IV q12h (09/18 減量)"], "status": "PAST"},
-            {"name": "SPIRONOLACTONE", "start": "09/15 08:00", "end": "使用中", "dose": ["25 mg PO QD"], "status": "ACTIVE"}
-        ]
-    },
-    "ADM-002": {
-        "trends": [{"date": f"11/{12+i}", "na": 136 + i*0.3, "k": 4.2 - i*0.05} for i in range(17)],
-        "gantt": [{"name": "AMLODIPINE", "type": "BP Impact", "startIdx": 0, "endIdx": 16, "startDate": "11/12", "endDate": "11/28", "color": "#10B981", "impact": "150->125", "level": "治療中"}],
-        "logs": [{"name": "AMLODIPINE", "start": "11/12", "end": "11/28", "dose": ["5mg"], "status": "PAST"}]
-    }
-}
-
-# --- 核心修復：資料正規化 ---
 def load_drugs():
-    try:
-        with open(DRUG_JSON, 'r', encoding='utf-8') as f: 
-            raw_data = json.load(f)
-            normalized = []
-            for item in raw_data:
-                # 統一欄位名稱，避免找不到資料
-                normalized.append({
-                    "id": item.get("id", item.get("drug id", "")),
-                    "name": item.get("name", ""),
-                    "adverse_reaction": item.get("adverse reaction", item.get("adverse_reaction", "")),
-                    "exception_handling": item.get("exception handling", item.get("exception_handling", ""))
-                })
-            return normalized
-    except Exception as e: 
-        print("Error loading JSON:", e)
-        return []
-
-@app.route('/api/stats', methods=['GET'])
-def get_stats():
-    data = load_drugs()
-    total = len(data)
-    with_reactions = sum(1 for d in data if d.get('adverse_reaction') and str(d.get('adverse_reaction')).lower() != 'nan')
-    return jsonify({"total": total, "with_reactions": with_reactions})
-
-@app.route('/api/search', methods=['GET'])
-def search_drugs():
-    data = load_drugs()
-    kw = request.args.get('keyword', '').lower()
-    flt = request.args.get('filter', '')
-    cat = request.args.get('category', '')
-    
-    results = data
-    if flt == 'reactions': 
-        results = [d for d in results if d.get('adverse_reaction') and str(d.get('adverse_reaction')).lower() != 'nan']
-    if cat: 
-        results = [d for d in results if cat.lower() in str(d.get('adverse_reaction', '')).lower()]
-    if kw: 
-        results = [d for d in results if kw in str(d.get('name', '')).lower() or kw in str(d.get('id', '')).lower()]
-    
-    return jsonify({"data": results[:1000]})
+    path = r"C:\Users\user\Desktop\chihyu\adrproject\api\drug_adverse.json"
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"JSON 解析失敗: {e}")
+    return []
 
 @app.route('/api/patients', methods=['GET'])
-def get_patients(): return jsonify(PATIENTS_DB)
+def get_patients():
+    try:
+        patients = Patient.query.all()
+        return jsonify({"status": "success", "data": [{
+            "id": f"P{str(p.patient_id).zfill(3)}", "name": "資料庫病患", "info": f"({p.gender}/{p.anchor_age})", 
+            "na": "141", "k": "4.4", "room": "801", "status": "ADR 監測中",
+            "admissions": [
+                {
+                    "id": 1, "date": "2024/05/01 - 2024/05/11",
+                    "clinicalData": {
+                        "trends": [{"date": f"05/{i:02d}", "na": 138+(i%4), "k": 3.8+(i%3)*0.2} for i in range(1, 12)],
+                        "gantt": [{"name": "Furosemide", "type": "Loop Diuretics", "startDate": "05/01", "endDate": "05/05", "startIdx": 0, "endIdx": 4, "color": "#F97316", "level": "高相關性", "impact": "Na↓"}],
+                        "logs": [{"name": "Furosemide", "start": "05/01", "end": "05/05", "dose": ["20mg"], "status": "STOPPED"}]
+                    }
+                }
+            ]
+        } for p in patients]})
+    except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/patients/<pid>/admissions', methods=['GET'])
-def get_admissions(pid): return jsonify(ADMISSIONS_DB.get(pid, []))
+@app.route('/api/search', methods=['POST'])
+def search_drugs():
+    req = request.get_json(silent=True) or {}
+    drugs = load_drugs()
+    
+    if req.get('filter') == 'reactions':
+        drugs = [d for d in drugs if (d.get('adverse reaction') or d.get('adverse_reaction')) and str(d.get('adverse reaction', d.get('adverse_reaction'))).lower() != 'nan']
+    elif req.get('category'):
+        # 🔥 核心修正：從 adverse reaction 的內文去尋找身體分類 (不分大小寫)
+        cat = req.get('category').lower()
+        drugs = [d for d in drugs if cat in str(d.get('adverse reaction', d.get('adverse_reaction'))).lower()]
+    elif req.get('keyword'):
+        k = req.get('keyword').lower()
+        drugs = [d for d in drugs if k in str(d.get('name', '')).lower() or k in str(d.get('id', d.get('drug id', ''))).lower()]
+        
+    return jsonify({"status": "success", "data": drugs})
 
-@app.route('/api/admissions/<aid>/details', methods=['GET'])
-def get_adm_details(aid): return jsonify(CLINICAL_DATA.get(aid, {}))
+@app.route('/api/stats', methods=['GET'])
+def get_stats(): 
+    drugs = load_drugs()
+    with_rx = len([d for d in drugs if (d.get('adverse reaction') or d.get('adverse_reaction')) and str(d.get('adverse reaction', d.get('adverse_reaction'))).lower() != 'nan'])
+    return jsonify({"total": len(drugs), "with_reactions": with_rx})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
