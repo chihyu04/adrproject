@@ -36,12 +36,21 @@ function App() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [drugAutoList, setDrugAutoList] = useState([]);
+  const [showDrugSuggestions, setShowDrugSuggestions] = useState(false);
   const [selectedDrug, setSelectedDrug] = useState(null);
+  const [isEditingDrug, setIsEditingDrug] = useState(false);
+
+  const [editDrugName, setEditDrugName] = useState('');
+  const [editDrugCode, setEditDrugCode] = useState('');
+  const [editAdverseReaction, setEditAdverseReaction] = useState('');
+  const [editExceptionHandling, setEditExceptionHandling] = useState('');
+  const [adrBlocks, setAdrBlocks] = useState([]);
   const [selectedMedRecord, setSelectedMedRecord] = useState(null);
   const [drugDetailReturnView, setDrugDetailReturnView] = useState('repository');
   const [stats, setStats] = useState({ total: 0, with_reactions: 0 });
   const [showCategories, setShowCategories] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState([]);
   const [currentLabel, setCurrentLabel] = useState('');
   const [showCopyToast, setShowCopyToast] = useState(false);
 
@@ -77,8 +86,9 @@ function App() {
   const [eiAnalyte, setEiAnalyte] = useState('');
   const [eiDirection, setEiDirection] = useState('');
   const [eiKeyword, setEiKeyword] = useState('');
+  const [showEiSuggestions, setShowEiSuggestions] = useState(false);
 
-  // 院內特徵值區間
+  // 院內檢驗值區間
   const [referenceRanges, setReferenceRanges] = useState([]);
   const [refRangesLoading, setRefRangesLoading] = useState(false);
   const [editingRangeId, setEditingRangeId] = useState(null);
@@ -158,6 +168,28 @@ function App() {
       }
     };
     fetchInitialData();
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    fetch(`${API_BASE}/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    })
+      .then(res => res.json())
+      .then(json => {
+        if (json.status === "success") {
+          setDrugAutoList(json.data || []);
+        }
+      })
+      .catch(err => {
+        console.error("藥物推薦清單載入失敗:", err);
+      });
+
   }, [isLoggedIn]);
 
   const isPharmacist = currentUser?.role === '藥師';
@@ -288,6 +320,72 @@ function App() {
       } catch {}
     });
   };
+  const handleSaveDrugDetail = async () => {
+
+    try {
+
+      const res = await fetch(
+
+        `${API_BASE}/drugs/${encodeURIComponent(selectedDrug.name)}`,
+
+        {
+          method: 'PUT',
+
+          headers: {
+            'Content-Type': 'application/json'
+          },
+
+          body: JSON.stringify({
+
+            drug_name: editDrugName,
+
+            drug_code: editDrugCode,
+
+            adverse_reaction: editAdverseReaction,
+
+            exception_handling: editExceptionHandling
+
+          })
+
+        }
+
+      );
+
+      const json = await res.json();
+
+      if (json.status === 'success') {
+
+        setDrugMgmtList(prev =>
+
+          prev.map(d =>
+
+            d.name === selectedDrug.name
+              ? json.data
+              : d
+
+          )
+
+        );
+
+        setSelectedDrug(json.data);
+
+        setIsEditingDrug(false);
+
+        alert('藥物資料已更新');
+
+      } else {
+
+        alert(json.message || '更新失敗');
+
+      }
+
+    } catch (err) {
+
+      alert('更新失敗：' + err.message);
+
+    }
+
+  };
 
   const openDrugModal = async (drugName) => {
     setEiModalDrug(drugName);
@@ -359,22 +457,25 @@ function App() {
   };
 
   const performSearch = (params, label) => {
-    setIsLoading(true); 
+    setIsLoading(true);
     setCurrentLabel(label);
-    fetch(`${API_BASE}/search`, { 
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' }, 
-      body: JSON.stringify(params || {}) 
+
+    fetch(`${API_BASE}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params || {})
     })
-    .then(res => res.json())
-    .then(json => { 
-      if (json.status === "success") setSearchResults(json.data); 
-    })
-    .catch(err => { 
-      console.error("搜尋出錯:", err); 
-      alert("無法連線後端 API"); 
-    })
-    .finally(() => setIsLoading(false));
+      .then(res => res.json())
+      .then(json => {
+        if (json.status === "success") {
+          setSearchResults(json.data);
+        }
+      })
+      .catch(err => {
+        console.error("搜尋出錯:", err);
+        alert("無法連線後端 API");
+      })
+      .finally(() => setIsLoading(false));
   };
 
   const openDrugDetailFromPatient = async (drugName) => {
@@ -484,7 +585,8 @@ const patientSuggestions = patientSearchText.trim()
       ">10%",
       "1% to 10%",
       "<1%",
-      "≥10%"
+      "≥10%",
+      ...adrBlocks.map(block => block.frequency).filter(Boolean)
     ];
 
     const escapeRegExp = (string) =>
@@ -517,34 +619,154 @@ const patientSuggestions = patientSearchText.trim()
     return `<div class="text-slate-700 leading-loose text-[16px] print-text-main break-words whitespace-pre-wrap">${processed}</div>`;
   };
 
+  const frequencyTitles = [
+    '>10%',
+    '≥10%',
+    '1% to 10%',
+    '<1%',
+    'Frequency not defined',
+    'Postmarketing and/or case reports',
+    'Postmarketing'
+  ];
+
+  const escapeRegExp = (string) =>
+    string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const parseAdrToBlocks = (text) => {
+    if (!text || String(text).toLowerCase() === 'nan') {
+      return [];
+    }
+
+    const source = String(text)
+      .replace(/^Adverse Reactions\s*/i, '')
+      .replace(/\(Ref\s*\)/gi, '')
+      .replace(/<[^>]*>/g, '')
+      .trim();
+
+    const freqPattern = frequencyTitles
+      .map(escapeRegExp)
+      .join('|');
+
+    const freqRegex = new RegExp(`(${freqPattern}):?`, 'gi');
+
+    const matches = [...source.matchAll(freqRegex)];
+
+    if (matches.length === 0) {
+      return [{
+        frequency: '',
+        sections: [{
+          category: 'Miscellaneous',
+          content: source
+        }]
+      }];
+    }
+
+    const blocks = [];
+
+    matches.forEach((match, index) => {
+      const frequency = match[1].trim();
+
+      const start = match.index + match[0].length;
+      const end = index + 1 < matches.length
+        ? matches[index + 1].index
+        : source.length;
+
+      const bodyText = source.slice(start, end).trim();
+
+      const sections = [];
+
+      categories.forEach(cat => {
+        const catRegex = new RegExp(
+          `${escapeRegExp(cat)}:([\\s\\S]*?)(?=${categories.map(escapeRegExp).join(':|')}:|$)`,
+          'i'
+        );
+
+        const catMatch = bodyText.match(catRegex);
+
+        if (catMatch) {
+          sections.push({
+            category: cat,
+            content: catMatch[1].trim()
+          });
+        }
+      });
+
+      if (sections.length === 0 && bodyText) {
+        sections.push({
+          category: 'Miscellaneous',
+          content: bodyText
+        });
+      }
+
+      blocks.push({
+        frequency,
+        sections
+      });
+    });
+
+  return blocks;
+};
+
+  const buildAdrFromBlocks = (blocks) => {
+    return blocks
+      .map(block => {
+        const sectionText = block.sections
+          .map(sec => `${sec.category}: ${sec.content}`)
+          .join('\n');
+
+        return `${block.frequency}:\n${sectionText}`;
+      })
+      .join('\n\n');
+  };
+
   const copyToClipboard = () => {
     if (!selectedDrug) return;
+
     let textToCopy = `【藥物名稱】${selectedDrug.name}\n\n`;
-    const rawAdverse = selectedDrug['adverse reaction'] || selectedDrug.adverse_reaction;
-    const rawException = selectedDrug['exception handling'] || selectedDrug.exception_handling;
+
+    const rawAdverse =
+      selectedDrug['adverse reaction'] ||
+      selectedDrug.adverse_reaction;
+
+    const rawException =
+      selectedDrug['exception handling'] ||
+      selectedDrug.exception_handling;
 
     const convertHtmlToText = (htmlStr) => {
       const formattedHtml = formatAndReplaceText(htmlStr);
       const temp = document.createElement('div');
+
       temp.innerHTML = formattedHtml;
-      
+
       const sections = temp.querySelectorAll('.border-l-4');
-      sections.forEach(sec => { sec.prepend('\n\n['); sec.append(']\n'); });
-      
+      sections.forEach(sec => {
+        sec.prepend('\n\n[');
+        sec.append(']\n');
+      });
+
       const strongs = temp.querySelectorAll('strong');
-      strongs.forEach(s => { s.prepend('\n'); });
-      
+      strongs.forEach(s => {
+        s.prepend('\n');
+      });
+
       const badges = temp.querySelectorAll('.inline-flex');
-      badges.forEach(b => { b.innerHTML = `[${b.innerText}]`; });
-      
+      badges.forEach(b => {
+        b.innerHTML = `[${b.innerText}]`;
+      });
+
       return temp.innerText.trim();
     };
-    
-    if (rawAdverse && String(rawAdverse).toLowerCase() !== 'nan') textToCopy += `【不良反應】\n${convertHtmlToText(rawAdverse)}\n\n`;
-    if (rawException && String(rawException).toLowerCase() !== 'nan') textToCopy += `【例外處理】\n${convertHtmlToText(rawException)}`;
-    
+
+    if (rawAdverse && String(rawAdverse).toLowerCase() !== 'nan') {
+      textToCopy += `【不良反應】\n${convertHtmlToText(rawAdverse)}\n\n`;
+    }
+
+    if (rawException && String(rawException).toLowerCase() !== 'nan') {
+      textToCopy += `【例外處理】\n${convertHtmlToText(rawException)}`;
+    }
+
     navigator.clipboard.writeText(textToCopy).then(() => {
-      setShowCopyToast(true); 
+      setShowCopyToast(true);
       setTimeout(() => setShowCopyToast(false), 2000);
     });
   };
@@ -617,7 +839,7 @@ const patientSuggestions = patientSearchText.trim()
                   view === 'ref_ranges' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100' : 'text-slate-400 hover:bg-slate-50'
                 }`}
               >
-                <SlidersHorizontal size={20} /> 特徵值區間
+                <SlidersHorizontal size={20} /> 檢驗值區間
               </button>
               <button
                 onClick={() => setView('suggestions')}
@@ -625,7 +847,7 @@ const patientSuggestions = patientSearchText.trim()
                   view === 'suggestions' ? 'bg-blue-600 text-white shadow-xl shadow-blue-100' : 'text-slate-400 hover:bg-slate-50'
                 }`}
               >
-                <AlertCircle size={20} /> 醫師變更建議審查
+                <AlertCircle size={20} /> 用藥變更建議審查
               </button>
             </>
           )}
@@ -872,7 +1094,13 @@ const patientSuggestions = patientSearchText.trim()
               {selectedPatient?.id}　{selectedPatient?.name}
             </h1>
             <p className="text-sm font-bold text-slate-400 mt-2">
-              {selectedPatient?.info}｜目前狀態：{selectedPatient?.status}
+              {selectedPatient?.info}｜目前狀態：{
+                selectedPatient?.status === 'Na LOW' ? '鈉偏低' :
+                selectedPatient?.status === 'Na HIGH' ? '鈉偏高' :
+                selectedPatient?.status === 'K LOW' ? '鉀偏低' :
+                selectedPatient?.status === 'K HIGH' ? '鉀偏高' :
+                selectedPatient?.status
+              }
             </p>
           </div>
 
@@ -1081,7 +1309,7 @@ const patientSuggestions = patientSearchText.trim()
                       stroke="none"
                     >
                       <Label
-                        value={`${cfg.label} 正常區間 (${cfg.normalMin}-${cfg.normalMax})`}
+                        value={`${cfg.label} 正常區間：${cfg.normalMin}–${cfg.normalMax} ${cfg.unit}`}
                         position="insideTopLeft"
                         fill={cfg.color}
                         fontSize={11}
@@ -1205,7 +1433,9 @@ const patientSuggestions = patientSearchText.trim()
               <tbody className="divide-y divide-slate-50">
                 {abnormalLabs.map((lab, i) => (
                   <tr key={i} className="hover:bg-rose-50/40 transition-all">
-                    <td className="py-5 font-black text-slate-700">{lab.ion}</td>
+                    <td className="py-5 font-black text-slate-700">
+                      {lab.ion} 
+                    </td>
                     <td className="py-5 text-slate-500 font-mono">{lab.time}</td>
                     <td className="py-5 font-black text-rose-500">
                       {lab.value} {lab.unit}
@@ -1278,7 +1508,7 @@ const patientSuggestions = patientSearchText.trim()
 
                     <td className="py-6">
                       {log.impact ? (
-                        <span className="bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-xs font-black border border-amber-200">
+                        <span className="bg-amber-50 text-amber-700 px-4 py-1.5 rounded-full text-base font-black border border-amber-200">
                           {log.impact}
                         </span>
                       ) : (
@@ -1341,8 +1571,10 @@ const patientSuggestions = patientSearchText.trim()
                                   </td>
                                   <td className="p-4 text-right text-slate-400 font-bold">
                                     {row.hoursAfterDrug !== null && row.hoursAfterDrug !== undefined
-                                      ? Number(row.hoursAfterDrug).toFixed(2)
-                                      : '-'} hr
+                                      ? Number(row.hoursAfterDrug) < 0
+                                        ? `給藥於檢驗前 ${Math.abs(Number(row.hoursAfterDrug)).toFixed(2)} 小時`
+                                        : `給藥於檢驗後 ${Number(row.hoursAfterDrug).toFixed(2)} 小時`
+                                      : '-'}
                                   </td>
                                 </tr>
                               ))}
@@ -1368,7 +1600,7 @@ const patientSuggestions = patientSearchText.trim()
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest">
               <tr>
-                <th className="p-8 text-left">臨床肇因藥物</th>
+                <th className="p-8 text-left">疑似致因藥物</th>
                 <th className="p-8 text-left">影響維度</th>
                 <th className="p-8 text-center">檢驗值變化</th>
               </tr>
@@ -1413,22 +1645,41 @@ const patientSuggestions = patientSearchText.trim()
         <h1 className={`font-black text-[#0f4c81] flex items-center justify-center gap-3 transition-all ${searchResults.length > 0 ? "text-2xl" : "text-4xl"}`}>
           <Search size={searchResults.length > 0 ? 28 : 40} /> 台北榮總藥物查詢
         </h1>
-        {searchResults.length === 0 && <p className="text-slate-400 mt-3 font-bold tracking-widest">臨床專用搜尋引擎</p>}
-        
-        <div className="flex items-center bg-white border border-slate-200 rounded-full px-6 py-4 shadow-lg mt-8 w-full max-w-3xl mx-auto focus-within:ring-4 focus-within:ring-blue-100 transition-all">
+
+        {searchResults.length === 0 && (
+          <p className="text-slate-400 mt-3 font-bold tracking-widest">
+            臨床專用搜尋引擎
+          </p>
+        )}
+
+        <div className="relative flex items-center bg-white border border-slate-200 rounded-full px-6 py-4 shadow-lg mt-8 w-full max-w-3xl mx-auto focus-within:ring-4 focus-within:ring-blue-100 transition-all">
           <Search
             className="text-slate-400 mr-4 cursor-pointer hover:text-blue-600"
             size={24}
-            onClick={() => performSearch({ keyword: searchQuery.trim() }, "搜尋：" + searchQuery)}
+            onClick={() => {
+              performSearch(
+                { keyword: searchQuery.trim() },
+                "搜尋：" + searchQuery
+              );
+              setShowDrugSuggestions(false);
+            }}
           />
 
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setShowDrugSuggestions(true);
+            }}
+            onFocus={() => setShowDrugSuggestions(true)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
-                performSearch({ keyword: searchQuery.trim() }, "搜尋：" + searchQuery);
+                performSearch(
+                  { keyword: searchQuery.trim() },
+                  "搜尋：" + searchQuery
+                );
+                setShowDrugSuggestions(false);
               }
             }}
             className="flex-1 outline-none text-xl text-slate-800 bg-transparent font-bold"
@@ -1442,34 +1693,135 @@ const patientSuggestions = patientSearchText.trim()
               onClick={() => {
                 setSearchQuery('');
                 setSearchResults([]);
+                setShowDrugSuggestions(false);
               }}
             />
+          )}
+
+          {showDrugSuggestions && searchQuery.trim() && (
+            <div className="absolute left-0 right-0 top-full mt-3 bg-white border border-slate-100 rounded-3xl shadow-2xl z-50 overflow-hidden text-left">
+              {drugAutoList
+                .filter((drug) =>
+                  String(drug.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  String(drug.id || drug['drug id'] || '').toLowerCase().includes(searchQuery.toLowerCase())
+                )
+                .slice(0, 8)
+                .map((drug, i) => (
+                  <div
+                    key={i}
+                    onClick={() => {
+                      setSearchQuery(drug.name);
+                      setShowDrugSuggestions(false);
+                      performSearch(
+                        { keyword: drug.name },
+                        "搜尋：" + drug.name
+                      );
+                    }}
+                    className="px-6 py-4 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition-all"
+                  >
+                    <p className="font-black text-slate-700">{drug.name}</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      藥碼：{drug.id || drug['drug id'] || '-'}
+                    </p>
+                  </div>
+                ))}
+
+              {drugAutoList.filter((drug) =>
+                String(drug.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                String(drug.id || drug['drug id'] || '').toLowerCase().includes(searchQuery.toLowerCase())
+              ).length === 0 && (
+                <div className="px-6 py-4 text-slate-400 font-bold">
+                  查無符合藥物
+                </div>
+              )}
+            </div>
           )}
         </div>
         
         {searchResults.length === 0 && (
           <div className="flex flex-wrap justify-center gap-4 mt-8">
-            <button onClick={() => performSearch({}, '完整收錄藥物')} className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-[#0f4c81] text-[#0f4c81] bg-white font-bold hover:bg-[#0f4c81] hover:text-white transition-all shadow-sm">
-              <Database size={16} /> 收錄藥物 <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs">{stats.total}</span>
-            </button>
-            <button onClick={() => performSearch({ filter: 'reactions' }, '含不良反應資料庫')} className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-rose-600 text-rose-600 bg-white font-bold hover:bg-rose-600 hover:text-white transition-all shadow-sm">
-              <AlertTriangle size={16} /> 不良反應藥物 <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full text-xs">{stats.with_reactions}</span>
-            </button>
+          <button
+            onClick={() => {
+              setSelectedCategories([]);
+              performSearch({}, '完整收錄藥物');
+            }}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-[#0f4c81] text-[#0f4c81] bg-white font-bold hover:bg-[#0f4c81] hover:text-white transition-all shadow-sm"
+          >
+            <Database size={16} /> 收錄藥物
+            <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-xs">{stats.total}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setSelectedCategories([]);
+              performSearch({ filter: 'reactions' }, '含不良反應資料庫');
+            }}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-rose-600 text-rose-600 bg-white font-bold hover:bg-rose-600 hover:text-white transition-all shadow-sm"
+          >
+            <AlertTriangle size={16} /> 不良反應藥物
+            <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full text-xs">{stats.with_reactions}</span>
+          </button>
             <div className="relative">
               <button onClick={() => setShowCategories(!showCategories)} className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-emerald-600 text-emerald-600 bg-white font-bold hover:bg-emerald-600 hover:text-white transition-all shadow-sm">
                 <Activity size={16} /> 身體反應分類
               </button>
               {showCategories && (
-                <div className="absolute top-full mt-2 w-64 bg-white border border-slate-100 rounded-2xl shadow-xl p-4 grid grid-cols-1 gap-2 z-50 left-1/2 -translate-x-1/2">
+                <div className="absolute top-full mt-2 w-[640px] max-h-[260px] overflow-y-auto bg-white border border-slate-100 rounded-2xl shadow-xl p-3 grid grid-cols-3 gap-2 z-50 left-1/2 -translate-x-1/2">
                   {categories.map(sys => (
-                    <span 
-                      key={sys} 
-                      onClick={() => { setSelectedCategory(sys); performSearch({ category: sys }, "分類：" + sys); setShowCategories(false); }} 
-                      className={`px-4 py-2 rounded-xl text-sm font-bold cursor-pointer transition-colors text-left ${selectedCategory === sys ? "bg-emerald-600 text-white" : "bg-slate-50 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700"}`}
+                    <label
+                      key={sys}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors text-left ${
+                        selectedCategories.includes(sys)
+                          ? "bg-emerald-600 text-white"
+                          : "bg-slate-50 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700"
+                      }`}
                     >
+                      <input
+                        type="checkbox"
+                        className="w-3 h-3"
+                        checked={selectedCategories.includes(sys)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedCategories(prev => [...prev, sys]);
+                          } else {
+                            setSelectedCategories(prev => prev.filter(x => x !== sys));
+                          }
+                        }}
+                      />
                       {sys}
-                    </span>
+                    </label>
                   ))}
+                  <div className="col-span-3 flex gap-2 pt-3 border-t border-slate-100">
+                    <button
+                      onClick={() => {
+                        if (selectedCategories.length === 0) {
+                          alert('請至少選擇一個身體反應分類');
+                          return;
+                        }
+
+                        performSearch(
+                          { categories: selectedCategories },
+                          "分類：" + selectedCategories.join('、')
+                        );
+
+                        setShowCategories(false);
+                      }}
+                      className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-xl font-black text-sm"
+                    >
+                      套用分類
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setSelectedCategories([]);
+                        setSearchResults([]);
+                        setCurrentLabel('');
+                      }}
+                      className="px-4 py-2 bg-slate-100 text-slate-500 rounded-xl font-black text-sm"
+                    >
+                      清除
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1478,7 +1830,7 @@ const patientSuggestions = patientSearchText.trim()
       </div>
 
       {searchResults.length > 0 && (
-        <div className="w-full max-w-5xl bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden mb-12">
+        <div className="w-full max-w-5xl bg-white rounded-3xl shadow-sm border border-slate-100 overflow-y-auto mb-12 max-h-[65vh]">
           <div className="bg-slate-50 border-b border-slate-100 p-6 flex justify-between items-center">
             <h2 className="font-black text-slate-700">顯示 {currentLabel}</h2>
             <span className="text-sm font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full">共 {searchResults.length} 筆</span>
@@ -1493,12 +1845,43 @@ const patientSuggestions = patientSearchText.trim()
             </thead>
             <tbody className="divide-y divide-slate-50">
               {searchResults.map((drug, i) => {
-                const rawAdverse = drug['adverse reaction'] || drug.adverse_reaction;
-                const hasReaction = rawAdverse && String(rawAdverse).toLowerCase() !== 'nan';
+                const rawAdverse =
+                  drug['adverse reaction'] ||
+                  drug.adverse_reaction ||
+                  '';
+
+                const hasReaction =
+                  rawAdverse &&
+                  String(rawAdverse).toLowerCase() !== 'nan';
+
+                const matchedCategories = selectedCategories.filter(cat =>
+                  String(rawAdverse).toLowerCase().includes(cat.toLowerCase())
+                );
                 return (
                   <tr key={i} className={`cursor-pointer hover:bg-blue-50/50 transition-all ${!hasReaction ? "bg-slate-50/30" : ""}`} onClick={() => {setSelectedDrug(drug);setDrugDetailReturnView('repository');setView('drug_detail');}}>
                     <td className="py-5 px-6 text-center font-mono font-bold text-slate-500">{drug.id || drug['drug id'] || '-'}</td>
-                    <td className="py-5 px-6 font-black text-slate-800 text-lg">{drug.name}</td>
+                    <td className="py-5 px-6">
+                      <div className="font-black text-slate-800 text-lg">
+                        {drug.name}
+                      </div>
+
+                      {matchedCategories.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <span className="text-[11px] font-black text-emerald-600">
+                            包含：
+                          </span>
+
+                          {matchedCategories.map(cat => (
+                            <span
+                              key={cat}
+                              className="text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-full"
+                            >
+                              {cat}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="py-5 px-6 text-center">
                       {hasReaction 
                         ? <span className="bg-rose-50 text-rose-600 px-3 py-1 rounded-full text-xs font-black border border-rose-200 inline-flex items-center gap-1"><AlertTriangle size={12}/> 注意不良反應</span>
@@ -1524,6 +1907,20 @@ const patientSuggestions = patientSearchText.trim()
   const drugMgmtSuggestions = drugMgmtSearch.trim()
   ? filtered.slice(0, 8)
   : [];
+
+  const eiSuggestions = eiKeyword.trim()
+    ? Array.from(
+        new Set(
+          eiList
+            .map(row => row.drug_name)
+            .filter(name =>
+              String(name || '')
+                .toLowerCase()
+                .includes(eiKeyword.toLowerCase())
+            )
+        )
+      ).slice(0, 8)
+    : [];
 
     const handleImport = (e) => {
       const file = e.target.files[0];
@@ -1569,10 +1966,6 @@ const patientSuggestions = patientSearchText.trim()
           <div className="flex gap-3">
             {drugMgmtTab === 'drugs' && (
               <>
-                <label className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl font-bold cursor-pointer hover:bg-slate-50 transition-all shadow-sm">
-                  <Upload size={18} /> 匯入 JSON
-                  <input type="file" accept=".json" className="hidden" onChange={handleImport} />
-                </label>
                 <button onClick={() => setShowAddDrug(!showAddDrug)} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-sm">
                   <Plus size={18} /> 新增藥物
                 </button>
@@ -1715,8 +2108,18 @@ const patientSuggestions = patientSearchText.trim()
                     <tbody className="divide-y divide-slate-50">
                       {filtered.map((drug, i) => {
                         const raw = drug['adverse reaction'] || drug.adverse_reaction;
-                        const hasRx = raw && String(raw).toLowerCase() !== 'nan';
-                        const preview = hasRx ? String(raw).replace(/<[^>]*>/g, '').trim().slice(0, 90) + '…' : '無記載';
+
+                        const cleanRaw = raw
+                          ? String(raw).replace(/<[^>]*>/g, '').trim()
+                          : '';
+
+                        const hasRx =
+                          cleanRaw &&
+                          cleanRaw.toLowerCase() !== 'nan';
+
+                        const preview = hasRx
+                          ? cleanRaw.slice(0, 90) + '…'
+                          : '目前無記載';
                         return (
                           <tr
                             key={i}
@@ -1728,14 +2131,75 @@ const patientSuggestions = patientSearchText.trim()
                             className="cursor-pointer hover:bg-blue-50/50 transition-all"
                           >
                             <td className="py-5 px-6 font-mono text-slate-400 font-bold text-sm text-center">{drug.id || drug['drug id'] || '—'}</td>
-                            <td className="py-5 px-6 font-black text-slate-800 text-base">{drug.name}</td>
+                            <td className="py-5 px-6">
+                              <div className="font-black text-slate-800 text-base">
+                                {drug.name}
+                              </div>
+                            </td>
                             <td className="py-5 px-6 text-slate-500 font-medium text-sm max-w-[200px] truncate">{preview}</td>
                             <td className="py-5 px-6 text-center">
                               {hasRx ? <span className="bg-rose-50 text-rose-600 px-3 py-1.5 rounded-full text-xs font-black border border-rose-200 whitespace-nowrap">有不良反應</span>
                                       : <span className="bg-slate-100 text-slate-400 px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap">無記載</span>}
                             </td>
                             <td className="py-5 px-6 text-center">
-                              <button onClick={() => handleDeleteDrug(drug)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
+                              <div className="flex justify-center gap-2">
+                                {/* 編輯 */}
+                                <button
+                                  onClick={(e) => {
+
+                                    e.stopPropagation();
+
+                                    setSelectedDrug(drug);
+
+                                    setEditDrugName(
+                                      drug.name || ''
+                                    );
+
+                                    setEditDrugCode(
+                                      drug.id ||
+                                      drug['drug id'] ||
+                                      ''
+                                    );
+
+                                    setEditAdverseReaction(
+                                      drug['adverse reaction'] ||
+                                      drug.adverse_reaction ||
+                                      ''
+                                    );
+
+                                    setEditExceptionHandling(
+                                      drug['exception handling'] ||
+                                      drug.exception_handling ||
+                                      ''
+                                    );
+
+                                    const rawAdr =
+                                    drug['adverse reaction'] ||
+                                    drug.adverse_reaction ||
+                                    '';
+
+                                  setAdrBlocks(parseAdrToBlocks(rawAdr));
+
+                                    setIsEditingDrug(true);
+
+                                  }}
+                                  className="p-2.5 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-xl transition-all"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+
+                                {/* 刪除 */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteDrug(drug);
+                                  }}
+                                  className="p-2.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1764,8 +2228,8 @@ const patientSuggestions = patientSearchText.trim()
                     <div>
                       <label className="text-xs font-bold text-slate-400 mb-2 block uppercase">電解質</label>
                       <select className={fldCls} value={newEi.analyte} onChange={e => setNewEi(p => ({...p, analyte: e.target.value}))}>
-                        <option value="K">K（鉀）</option>
-                        <option value="Na">Na（鈉）</option>
+                        <option value="Na">Na</option>
+                        <option value="K">K</option>
                       </select>
                     </div>
                     <div>
@@ -1790,15 +2254,29 @@ const patientSuggestions = patientSearchText.trim()
               <div className="flex flex-wrap items-center gap-4 mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
                 <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 flex-1 min-w-48 focus-within:ring-2 focus-within:ring-blue-200 transition-all">
                   <Search size={18} className="text-slate-400 mr-2" />
-                  <div className="flex items-center bg-white border border-slate-200 rounded-full px-5 py-3 shadow-sm w-full max-w-xl focus-within:ring-4 focus-within:ring-blue-100 transition-all">
-                    <Search className="text-slate-400 mr-3" size={20} />
+                  <div className="relative flex items-center bg-white border border-slate-200 rounded-full px-5 py-3 shadow-sm w-full max-w-xl focus-within:ring-4 focus-within:ring-blue-100 transition-all">
+                    <Search
+                      className="text-slate-400 mr-3 cursor-pointer hover:text-blue-600"
+                      size={20}
+                      onClick={() => {
+                        loadEiData(eiAnalyte, eiDirection, eiKeyword.trim());
+                        setShowEiSuggestions(false);
+                      }}
+                    />
 
                     <input
                       type="text"
                       value={eiKeyword}
-                      onChange={(e) => setEiKeyword(e.target.value)}
+                      onChange={(e) => {
+                        setEiKeyword(e.target.value);
+                        setShowEiSuggestions(true);
+                      }}
+                      onFocus={() => setShowEiSuggestions(true)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') loadEiData(eiAnalyte, eiDirection, e.target.value);
+                        if (e.key === 'Enter') {
+                          loadEiData(eiAnalyte, eiDirection, eiKeyword.trim());
+                          setShowEiSuggestions(false);
+                        }
                       }}
                       className="flex-1 outline-none text-sm text-slate-700 bg-transparent font-bold"
                       placeholder="搜尋藥物名稱..."
@@ -1807,19 +2285,45 @@ const patientSuggestions = patientSearchText.trim()
                     {eiKeyword && (
                       <X
                         size={18}
-                        className="text-slate-400 cursor-pointer"
+                        className="text-slate-400 cursor-pointer hover:text-rose-500"
                         onClick={() => {
                           setEiKeyword('');
+                          setShowEiSuggestions(false);
                           loadEiData(eiAnalyte, eiDirection, '');
                         }}
                       />
+                    )}
+
+                    {showEiSuggestions && eiKeyword.trim() && (
+                      <div className="absolute left-0 right-0 top-full mt-3 bg-white border border-slate-100 rounded-2xl shadow-2xl z-50 overflow-hidden text-left">
+                        {eiSuggestions.map((name, i) => (
+                          <div
+                            key={i}
+                            onClick={() => {
+                              setEiKeyword(name);
+                              setShowEiSuggestions(false);
+                              loadEiData(eiAnalyte, eiDirection, name);
+                            }}
+                            className="px-5 py-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition-all"
+                          >
+                            <p className="font-black text-slate-700">{name}</p>
+                            <p className="text-xs text-slate-400 mt-1">點擊快速搜尋</p>
+                          </div>
+                        ))}
+
+                        {eiSuggestions.length === 0 && (
+                          <div className="px-5 py-3 text-slate-400 font-bold">
+                            查無符合藥物
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
                 <select value={eiAnalyte} onChange={e => setEiAnalyte(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
                   <option value="">全部電解質</option>
-                  <option value="Na">Na（鈉）</option>
-                  <option value="K">K（鉀）</option>
+                  <option value="Na">Na</option>
+                  <option value="K">K</option>
                 </select>
                 <select value={eiDirection} onChange={e => setEiDirection(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-600 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
                   <option value="">全部方向</option>
@@ -1879,9 +2383,24 @@ const patientSuggestions = patientSearchText.trim()
                               </td>
                               <td className="py-4 px-6"><input className={inFldCls} value={editingEiData.remarks || ''} onChange={e => setEditingEiData(p => ({...p, remarks: e.target.value}))} /></td>
                               <td className="py-4 px-6 text-center">
-                                <div className="flex justify-center gap-2">
-                                  <button onClick={handleUpdateEi} className="px-3 py-1.5 bg-blue-600 text-white rounded-xl font-bold text-xs hover:bg-blue-700 shadow-sm">儲存</button>
-                                  <button type="button" onClick={() => setEditingEiKey(null)} className="px-3 py-1.5 bg-slate-200 text-slate-600 rounded-xl font-bold text-xs hover:bg-slate-300">取消</button>
+                                <div className="flex items-center justify-center gap-2">
+                                  <button
+                                    onClick={handleUpdateEi}
+                                    className="px-4 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-black hover:bg-blue-700 transition-all"
+                                  >
+                                    儲存
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingEiKey(null);
+                                      setEditingEiData({});
+                                    }}
+                                    className="px-3 py-1.5 bg-slate-200 text-slate-600 rounded-xl font-bold text-xs hover:bg-slate-300"
+                                  >
+                                    取消
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -1890,22 +2409,72 @@ const patientSuggestions = patientSearchText.trim()
                         return (
                           <tr key={i} className="hover:bg-slate-50 transition-all cursor-pointer group" onClick={() => openDrugModal(row.drug_name)}>
                             <td className="py-5 px-6 font-black text-blue-600 text-base group-hover:underline">{row.drug_name}</td>
-                            <td className="py-5 px-6 text-center">
-                              <span className={`px-4 py-1.5 rounded-full font-black text-sm border ${row.analyte === 'Na' ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>{row.analyte}</span>
+                            <td className="p-4">
+                              <span
+                                className={`px-3 py-1 rounded-full text-xs font-black border ${
+                                  row.analyte === 'Na'
+                                    ? 'bg-orange-50 text-orange-600 border-orange-200'
+                                    : row.analyte === 'K'
+                                    ? 'bg-indigo-50 text-indigo-600 border-indigo-200'
+                                    : 'bg-slate-50 text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                  {row.analyte}
+                              </span>
                             </td>
                             <td className="py-5 px-6 text-center">
                               {isUp  && <span className="inline-flex items-center gap-1.5 bg-rose-50 text-rose-600 border border-rose-200 px-4 py-1.5 rounded-full font-black text-sm"><AlertTriangle size={14}/> 升高</span>}
                               {isDown && <span className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-600 border border-blue-200 px-4 py-1.5 rounded-full font-black text-sm"><ArrowLeft className="-rotate-90" size={14}/> 降低</span>}
                               {!isUp && !isDown && <span className="text-slate-400 font-bold text-sm">{row.impact_direction}</span>}
                             </td>
-                            <td className="py-5 px-6 text-slate-500 font-bold text-sm">{row.remarks || '—'}</td>
-                            <td className="py-5 px-6 text-center" onClick={e => e.stopPropagation()}>
-                              <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => { setEditingEiKey(eiKey); setEditingEiData({...row, orig_drug_name: row.drug_name, orig_analyte: row.analyte, orig_impact_direction: row.impact_direction}); }} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"><Edit2 size={16} /></button>
-                                <button onClick={() => handleDeleteEi(row)} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 size={16} /></button>
+                          <td className="py-5 px-6 text-slate-500 font-bold text-sm">{row.remarks || '—'}</td>
+                          <td className="py-5 px-6 text-center" onClick={e => e.stopPropagation()}>
+                            {editingEiKey === eiKey ? (
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={handleUpdateEi}
+                                  className="px-4 py-1.5 rounded-xl bg-emerald-500 text-white text-xs font-black hover:bg-emerald-600 transition-all"
+                                >
+                                  儲存
+                                </button>
+
+                                <button
+                                  onClick={() => {
+                                    setEditingEiKey(null);
+                                    setEditingEiData({});
+                                  }}
+                                  className="px-4 py-1.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-black hover:bg-slate-200 transition-all"
+                                >
+                                  取消
+                                </button>
                               </div>
-                            </td>
-                          </tr>
+                            ) : (
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setEditingEiKey(eiKey);
+                                    setEditingEiData({
+                                      ...row,
+                                      orig_drug_name: row.drug_name,
+                                      orig_analyte: row.analyte,
+                                      orig_impact_direction: row.impact_direction
+                                    });
+                                  }}
+                                  className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteEi(row)}
+                                  className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
                         );
                       })}
                     </tbody>
@@ -1978,7 +2547,7 @@ const patientSuggestions = patientSearchText.trim()
     return (
       <div className="flex-1 overflow-y-auto p-10 bg-slate-50">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-black text-slate-800 tracking-tight">院內特徵值區間</h1>
+          <h1 className="text-3xl font-black text-slate-800 tracking-tight">院內檢驗值區間</h1>
           <button onClick={() => setShowAddRange(!showAddRange)} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-sm">
             <Plus size={18} /> 新增項目
           </button>
@@ -2063,9 +2632,20 @@ const patientSuggestions = patientSearchText.trim()
                       </td>
                       <td className="py-6 px-6 text-center text-xs text-slate-400 font-bold">{range.last_updated}</td>
                       <td className="py-6 px-6 text-center">
-                        <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => handleEdit(range)} className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"><Edit2 size={16} /></button>
-                          <button onClick={() => handleDelete(range)} className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><Trash2 size={16} /></button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleEdit(range)}
+                            className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+
+                          <button
+                            onClick={() => handleDelete(range)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       </td>
                     </>
@@ -2174,7 +2754,7 @@ const patientSuggestions = patientSearchText.trim()
                   <label className="text-xs font-black text-slate-400 mb-2 block uppercase tracking-wider">建議變更類型 *</label>
                   <select className={fldCls} value={suggestionForm.suggestion_type} onChange={e => setSuggestionForm({...suggestionForm, suggestion_type: e.target.value})}>
                     <option>新增不良反應</option>
-                    <option>修改現有敘述</option>
+                    <option>修改現有資料</option>
                     <option>修正電解質影響</option>
                     <option>其他建議</option>
                   </select>
@@ -2189,7 +2769,7 @@ const patientSuggestions = patientSearchText.trim()
                 </div>
                 <div className="flex justify-end gap-3 pt-6 border-t border-slate-100">
                   <button type="button" onClick={() => setShowAddSuggestionModal(false)} className="px-6 py-3 bg-slate-100 text-slate-600 text-sm font-bold rounded-xl hover:bg-slate-200 transition-all">取消</button>
-                  <button type="submit" className="px-6 py-3 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all">提交同步</button>
+                  <button type="submit" className="px-6 py-3 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all">提交建議</button>
                 </div>
               </form>
             </div>
@@ -2299,14 +2879,14 @@ const patientSuggestions = patientSearchText.trim()
 
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
-              <label className="block text-slate-500 font-black mb-2 text-xs uppercase tracking-wider ml-1">帳號 Username</label>
+              <label className="block text-slate-500 font-black mb-2 text-xs uppercase tracking-wider ml-1">帳號</label>
               <div className="relative">
                 <User size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input type="text" name="username" placeholder="請輸入院內帳號" className={inputCls} required />
               </div>
             </div>
             <div>
-              <label className="block text-slate-500 font-black mb-2 text-xs uppercase tracking-wider ml-1">密碼 Password</label>
+              <label className="block text-slate-500 font-black mb-2 text-xs uppercase tracking-wider ml-1">密碼</label>
               <div className="relative">
                 <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input type="password" name="password" placeholder="請輸入密碼" className={inputCls} required />
@@ -2580,6 +3160,278 @@ const patientSuggestions = patientSearchText.trim()
       </main>
 
       {/* Global Modals */}
+      {isEditingDrug && (
+
+      <div
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[400] flex items-center justify-center p-6"
+        onClick={() => setIsEditingDrug(false)}
+      >
+
+        <div
+          className="bg-white rounded-[2rem] shadow-2xl w-full max-w-7xl h-[90vh] overflow-hidden border border-slate-100 flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+
+          {/* Header */}
+          <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center">
+
+            <div>
+
+              <h2 className="text-3xl font-black text-slate-800">
+                編輯藥物不良反應
+              </h2>
+
+              <p className="text-sm text-slate-400 font-bold mt-1">
+                左側為即時排版預覽，右側為藥師編輯區
+              </p>
+
+            </div>
+
+            <button
+              onClick={() => setIsEditingDrug(false)}
+              className="p-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500"
+            >
+              <X size={22} />
+            </button>
+
+          </div>
+
+          {/* Content */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 p-6 bg-slate-50 overflow-hidden flex-1 min-h-0">    
+
+            {/* 左邊預覽 */}
+            <div>
+
+              <h3 className="font-black text-slate-700 mb-4 text-lg">
+                即時排版預覽
+              </h3>
+
+              <div className="bg-white rounded-3xl border border-slate-100 p-5 h-[60vh] overflow-y-auto">
+
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: formatAndReplaceText(
+                      editAdverseReaction || '目前無記載'
+                    )
+                  }}
+                />
+
+              </div>
+
+            </div>
+
+            {/* 右邊編輯 */}
+            <div className="h-[60vh] overflow-y-auto pr-2">
+
+              <h3 className="font-black text-slate-700 mb-4 text-lg">
+                編輯內容
+              </h3>
+
+              {/* 藥名 */}
+              <label className="block text-xs font-black text-slate-400 mb-2">
+                藥物名稱
+              </label>
+
+              <input
+                value={editDrugName}
+                onChange={(e) => setEditDrugName(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 mb-5 font-bold"
+              />
+
+              {/* 藥碼 */}
+              <label className="block text-xs font-black text-slate-400 mb-2">
+                藥物代碼
+              </label>
+
+              <input
+                value={editDrugCode}
+                onChange={(e) => setEditDrugCode(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 mb-5 font-bold"
+              />
+
+              {/* ADR */}
+              <label className="block text-xs font-black text-slate-400 mb-2">
+                不良反應內容
+              </label>
+
+              <div className="space-y-5 mb-6">
+                {adrBlocks.map((block, blockIndex) => (
+                  <div
+                    key={blockIndex}
+                    className="border border-slate-200 rounded-3xl bg-white overflow-hidden"
+                  >
+                    <div className="bg-blue-50 border-b border-blue-100 px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="flex-1 relative">
+                      <input
+                        list={`frequency-options-${blockIndex}`}
+                        value={block.frequency}
+                        onChange={(e) => {
+                          const next = [...adrBlocks];
+                          next[blockIndex].frequency = e.target.value;
+                          setAdrBlocks(next);
+                          setEditAdverseReaction(buildAdrFromBlocks(next));
+                        }}
+                        placeholder="可選擇或自行輸入大標題"
+                        className="bg-white border border-blue-200 rounded-xl px-3 py-2 font-black text-blue-700 w-full"
+                      />
+
+                      <datalist id={`frequency-options-${blockIndex}`}>
+                        {frequencyTitles.map(title => (
+                          <option key={title} value={title} />
+                        ))}
+                        <option value="未分類發生率" />
+                        <option value="Postmarketing" />
+                        <option value="Clinical trial experience" />
+                      </datalist>
+                    </div>
+
+                    <button
+                        onClick={() => {
+                          const next = adrBlocks.filter((_, i) => i !== blockIndex);
+                          setAdrBlocks(next);
+                          setEditAdverseReaction(buildAdrFromBlocks(next));
+                        }}
+                        className="px-3 py-2 bg-rose-50 text-rose-600 rounded-xl font-black text-xs hover:bg-rose-100"
+                      >
+                        刪除大標
+                      </button>
+                    </div>
+
+                    <div className="p-5 space-y-4">
+                      {block.sections.map((sec, secIndex) => (
+                        <div
+                          key={secIndex}
+                          className="bg-slate-50 border border-slate-100 rounded-2xl p-4"
+                        >
+                          <div className="flex items-center gap-3 mb-3">
+                            <select
+                              value={sec.category}
+                              onChange={(e) => {
+                                const next = [...adrBlocks];
+                                next[blockIndex].sections[secIndex].category = e.target.value;
+                                setAdrBlocks(next);
+                                setEditAdverseReaction(buildAdrFromBlocks(next));
+                              }}
+                              className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-black text-slate-600"
+                            >
+                              {categories.map(cat => (
+                                <option key={cat} value={cat}>
+                                  {cat}
+                                </option>
+                              ))}
+                            </select>
+
+                            <button
+                              onClick={() => {
+                                const next = [...adrBlocks];
+                                next[blockIndex].sections = next[blockIndex].sections.filter((_, i) => i !== secIndex);
+                                setAdrBlocks(next);
+                                setEditAdverseReaction(buildAdrFromBlocks(next));
+                              }}
+                              className="ml-auto px-3 py-2 bg-rose-50 text-rose-600 rounded-xl font-black text-xs hover:bg-rose-100"
+                            >
+                              刪除小標
+                            </button>
+                          </div>
+
+                          <textarea
+                            rows={4}
+                            value={sec.content}
+                            onChange={(e) => {
+                              const next = [...adrBlocks];
+                              next[blockIndex].sections[secIndex].content = e.target.value;
+                              setAdrBlocks(next);
+                              setEditAdverseReaction(buildAdrFromBlocks(next));
+                            }}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium leading-relaxed"
+                          />
+                        </div>
+                      ))}
+
+                      <button
+                        onClick={() => {
+                          const next = [...adrBlocks];
+                          next[blockIndex].sections.push({
+                            category: 'Miscellaneous',
+                            content: ''
+                          });
+                          setAdrBlocks(next);
+                          setEditAdverseReaction(buildAdrFromBlocks(next));
+                        }}
+                        className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-black text-sm hover:bg-slate-200"
+                      >
+                        + 新增身體部位小標
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => {
+                    const next = [
+                      ...adrBlocks,
+                      {
+                        frequency: '',
+                        sections: [
+                          {
+                            category: 'Miscellaneous',
+                            content: ''
+                          }
+                        ]
+                      }
+                    ];
+
+                    setAdrBlocks(next);
+                    setEditAdverseReaction(buildAdrFromBlocks(next));
+                  }}
+                  className="w-full py-4 bg-blue-50 text-blue-600 rounded-3xl font-black hover:bg-blue-100 border border-blue-100"
+                >
+                  + 新增發生率大標
+                </button>
+              </div>
+
+              {/* 注意事項 */}
+              <label className="block text-xs font-black text-slate-400 mb-2">
+                注意事項／例外處理
+              </label>
+
+              <textarea
+                rows={6}
+                value={editExceptionHandling}
+                onChange={(e) => setEditExceptionHandling(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-4 py-4 mb-6 font-medium leading-relaxed"
+              />
+
+              {/* 按鈕 */}
+              <div className="flex justify-end gap-3">
+
+                <button
+                  onClick={() => setIsEditingDrug(false)}
+                  className="px-6 py-3 bg-slate-100 text-slate-600 rounded-xl font-black"
+                >
+                  取消
+                </button>
+
+                <button
+                  onClick={handleSaveDrugDetail}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700"
+                >
+                  儲存修改
+                </button>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      )}
+
+
       {showEiModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-6 animate-fade-in" onClick={() => setShowEiModal(false)}>
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-slate-100" onClick={e => e.stopPropagation()}>
@@ -2612,7 +3464,13 @@ const patientSuggestions = patientSearchText.trim()
                       {eiModalData.map((r, i) => (
                         <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                           <div className="flex items-center gap-4">
-                            <span className={`px-4 py-1.5 rounded-full font-black text-sm border ${r.analyte === 'Na' ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}>
+                            <span className={`px-4 py-1.5 rounded-full font-black text-sm border ${
+                              r.analyte === 'Na'
+                                ? 'bg-orange-50 text-orange-600 border-orange-200'
+                                : r.analyte === 'K'
+                                ? 'bg-indigo-50 text-indigo-600 border-indigo-200'
+                                : 'bg-slate-50 text-slate-600 border-slate-200'
+                            }`}>
                               {r.analyte}
                             </span>
                             <span className="font-black text-slate-700">
@@ -2626,20 +3484,42 @@ const patientSuggestions = patientSearchText.trim()
                   )}
 
                   {(() => {
-                    const drugInfo = drugMgmtList.find(d => d.name === eiModalDrug);
-                    const rawAdverse = drugInfo?.['adverse reaction'] || drugInfo?.adverse_reaction;
-                    if (!rawAdverse || String(rawAdverse).toLowerCase() === 'nan') return null;
-                    const preview = String(rawAdverse).replace(/<[^>]*>/g, '').trim().slice(0, 400);
+
+                    const drugInfo =
+                      drugMgmtList.find(d => d.name === eiModalDrug);
+
+                    const rawAdverse =
+                      drugInfo?.['adverse reaction'] ||
+                      drugInfo?.adverse_reaction;
+
+                    const cleanAdverse = rawAdverse
+                      ? String(rawAdverse)
+                          .replace(/<[^>]*>/g, '')
+                          .trim()
+                      : '';
+
+                    const hasAdverse =
+                      cleanAdverse &&
+                      cleanAdverse.toLowerCase() !== 'nan';
+
+                    const preview = hasAdverse
+                      ? cleanAdverse.slice(0, 400)
+                      : '目前無記載';
+
                     return (
                       <>
                         <h3 className="font-black text-slate-700 text-lg mb-4 flex items-center gap-2 border-b pb-2 mt-8">
-                          <AlertCircle size={20} className="text-rose-500" /> 不良反應摘要預覽
+                          <AlertCircle size={20} className="text-rose-500" />
+                          不良反應摘要預覽
                         </h3>
+
                         <div className="bg-rose-50/30 p-6 rounded-2xl border border-rose-100 text-slate-600 text-sm leading-relaxed font-medium">
-                          {preview}…
+                          {preview}
+                          {hasAdverse && '…'}
                         </div>
                       </>
                     );
+
                   })()}
                 </>
               )}

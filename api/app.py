@@ -5,6 +5,47 @@ from datetime import datetime, timezone
 import json, os
 
 app = Flask(__name__)
+def shift_demo_time(dt):
+    if not dt:
+        return None
+
+    new_year = dt.year
+
+    # 太晚就往前移
+    while new_year > 2026:
+        new_year -= 7
+
+    # 太早就往後移
+    while new_year < 2020:
+        new_year += 7
+
+    try:
+        return dt.replace(year=new_year)
+
+    except ValueError:
+        # 處理 2/29
+        return dt.replace(year=new_year, day=28)
+fake_names = [
+    "王志明","李雅婷","陳冠宇","林怡君","張家豪","黃郁婷","吳承翰","蔡佩珊","劉柏廷","楊詩涵",
+    "鄭宇翔","謝佳穎","洪子軒","許庭瑜","郭冠廷","曾婉婷","邱柏宇","蘇怡安","高子晴","何俊傑",
+    "林家妤","陳柏翰","張雅雯","黃士豪","蔡佳蓉","楊承恩","劉品妤","鄭凱文","吳宜庭","謝宗翰",
+    "洪郁晴","許博鈞","郭怡伶","曾柏霖","邱雅筑","蘇志豪","高鈺婷","何承澤","林書宇","陳詩婷",
+    "張哲維","黃佩君","蔡政勳","楊雅玲","劉俊廷","鄭舒涵","吳柏叡","謝雅婷","洪柏安","許宥蓁",
+    "郭哲宇","曾郁庭","邱俊豪","蘇佳穎","高柏鈞","何佩珊","林哲安","陳冠蓉","張承宇","黃雅晴",
+    "蔡柏翰","楊子恩","劉詩涵","鄭俊宇","吳郁婷","謝柏豪","洪怡安","許哲維","郭佩蓉","曾書豪",
+    "邱雅雯","蘇承恩","高佳穎","何柏廷","林郁涵","陳俊傑","張雅筑","黃冠宇","蔡怡婷","楊柏鈞",
+    "劉哲豪","鄭佩君","吳書宇","謝子晴","洪承翰","許佳蓉","郭柏霖","曾哲維","邱佩珊","蘇俊廷",
+    "高雅玲","何哲宇","林怡伶","陳承恩","張郁婷","黃哲安","蔡雅晴","楊冠廷","劉佳穎","鄭柏宇",
+    "吳詩涵","謝俊豪","洪佩蓉","許雅筑","郭承澤","曾柏翰","邱郁庭","蘇哲維","高佩君","何雅婷",
+    "林俊宇","陳佳蓉","張柏廷","黃郁涵","蔡哲豪","楊佩珊","劉雅雯","鄭哲安","吳佳穎","謝柏鈞",
+    "洪哲宇","許佩君","郭雅玲","曾承恩","邱佳婷","蘇柏霖","高哲維","何怡安","林承宇","陳雅晴",
+    "張俊豪","黃佳穎","蔡佩蓉","楊哲宇","劉雅婷","鄭承翰","吳柏廷","謝郁婷","洪雅筑","許哲豪",
+    "郭佳蓉","曾俊宇","邱柏翰","蘇雅玲","高承恩","何佩珊","林哲維","陳怡婷","張雅晴","黃柏霖",
+    "蔡俊廷","楊郁涵","劉哲安","鄭佳穎","吳佩君","謝承宇","洪柏豪","許雅婷","郭哲維","曾佳蓉",
+    "邱俊宇","蘇佩珊","高哲豪","何雅晴","林柏廷","陳承澤","張佳穎","黃郁婷","蔡哲宇","楊雅筑",
+    "劉柏霖","鄭哲維","吳佳婷","謝承恩","洪哲豪","許佩蓉","郭俊廷","曾雅玲","邱哲安","蘇郁涵",
+    "高俊宇","何佳穎","林佩君","陳柏豪","張承翰","黃雅婷","蔡哲維","楊佳蓉","劉承宇","鄭柏廷"
+]
 app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql://postgres:123456@localhost:5432/mimic"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -17,10 +58,6 @@ def cors(response):
     response.headers['Access-Control-Allow-Private-Network'] = 'true'
     return response
 
-@app.route('/api/<path:path>', methods=['OPTIONS'])
-def options_handler(path):
-    return make_response('', 200)
-
 @app.errorhandler(Exception)
 def handle_exception(e):
     print(f"[FLASK ERROR] {type(e).__name__}: {e}")
@@ -28,6 +65,9 @@ def handle_exception(e):
         db.session.rollback()
     except Exception:
         pass
+
+    import traceback
+    traceback.print_exc()
     return jsonify({"status": "error", "message": str(e)}), 500
 
 # ==========================================
@@ -200,7 +240,7 @@ def get_patients():
                 patient_map[subject_id] = {
                     "id": f"P{subject_id}",
                     "subject_id": subject_id,
-                    "name": f"病患 {subject_id}",
+                    "name": fake_names[len(patient_map) % len(fake_names)],
                     "info": f"({r['gender'] or '-'} / {r['anchor_age'] or '-'})",
                     "na": "-",
                     "k": "-",
@@ -211,8 +251,8 @@ def get_patients():
                 }
 
             if adm_key not in patient_map[subject_id]["admissions"]:
-                admittime = r["admittime"]
-                dischtime = r["dischtime"]
+                admittime = shift_demo_time(r["admittime"])
+                dischtime = shift_demo_time(r["dischtime"])
                 date_text = (
                     f"{admittime.date() if admittime else '-'} - "
                     f"{dischtime.date() if dischtime else '-'}"
@@ -234,8 +274,8 @@ def get_patients():
             clinical = patient_map[subject_id]["admissions"][adm_key]["clinicalData"]
 
             # 檢驗趨勢資料
-            charttime = r["charttime"]
-            date_label = charttime.strftime("%m/%d %H:%M") if charttime else "-"
+            charttime = shift_demo_time(r["charttime"])
+            date_label = charttime.strftime("%Y-%m-%d %H:%M") if charttime else "-"
 
             trend = next(
                 (item for item in clinical["trends"] if item["date"] == date_label),
@@ -272,8 +312,8 @@ def get_patients():
             # 藥物資料
             drug_name = r["mimic_drug"]
             if drug_name:
-                drug_time = r["drug_time"]
-                drug_date = drug_time.strftime("%m/%d %H:%M") if drug_time else "-"
+                drug_time = shift_demo_time(r["drug_time"])
+                drug_date = drug_time.strftime("%Y-%m-%d %H:%M") if drug_time else "-"
 
                 impact = ""
 
@@ -360,12 +400,17 @@ def get_patients():
             patient["k"] = str(k_latest["value"]) if k_latest else "-"
 
             abnormal_status = []
+            if na_latest:
+                if na_latest["status"] == "LOW":
+                    abnormal_status.append("鈉偏低")
+                elif na_latest["status"] == "HIGH":
+                    abnormal_status.append("鈉偏高")
 
-            if na_latest and na_latest["status"] in ["LOW", "HIGH"]:
-                abnormal_status.append(f"Na {na_latest['status']}")
-
-            if k_latest and k_latest["status"] in ["LOW", "HIGH"]:
-                abnormal_status.append(f"K {k_latest['status']}")
+            if k_latest:
+                if k_latest["status"] == "LOW":
+                    abnormal_status.append("鉀偏低")
+                elif k_latest["status"] == "HIGH":
+                    abnormal_status.append("鉀偏高")
 
             patient["status"] = " / ".join(abnormal_status) if abnormal_status else "-"
 
@@ -386,45 +431,145 @@ def get_patients():
             result.append(patient)
 
         return jsonify({"status": "success", "data": result})
-
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        import traceback
+        traceback.print_exc()
+
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 
 @app.route('/api/search', methods=['POST'])
 def search_drugs():
     req = request.get_json(silent=True) or {}
-    drugs = load_drugs()
-    
-    if req.get('filter') == 'reactions':
-        drugs = [d for d in drugs if (d.get('adverse reaction') or d.get('adverse_reaction')) and str(d.get('adverse reaction', d.get('adverse_reaction'))).lower() != 'nan']
-    elif req.get('category'):
-        cat = req.get('category').lower()
-        drugs = [d for d in drugs if cat in str(d.get('adverse reaction', d.get('adverse_reaction'))).lower()]
-    elif req.get('keyword'):
-        k = req.get('keyword').lower()
-        drugs = [d for d in drugs if k in str(d.get('name', '')).lower() or k in str(d.get('id', d.get('drug id', ''))).lower()]
-        
+
+    keyword = (req.get('keyword') or '').strip().lower()
+    categories = req.get('categories') or []
+    filter_type = req.get('filter') or ''
+
+    sql = """
+        SELECT
+            drug_code AS id,
+            drug_name AS name,
+            adverse_reaction,
+            exception_handling
+        FROM reference.drug_adverse_info
+        WHERE 1=1
+    """
+
+    params = {}
+
+    if keyword:
+        sql += """
+            AND (
+                LOWER(drug_name) LIKE :kw
+                OR LOWER(COALESCE(drug_code, '')) LIKE :kw
+            )
+        """
+        params["kw"] = f"%{keyword}%"
+
+    if filter_type == "reactions":
+        sql += """
+            AND adverse_reaction IS NOT NULL
+            AND TRIM(adverse_reaction) <> ''
+            AND LOWER(adverse_reaction) <> 'nan'
+        """
+
+    sql += " ORDER BY drug_name"
+
+    rows = db.session.execute(text(sql), params).mappings().all()
+    drugs = [dict(r) for r in rows]
+
+    if categories:
+        drugs = [
+            d for d in drugs
+            if all(
+                c.lower() in str(d.get("adverse_reaction") or "").lower()
+                for c in categories
+            )
+        ]
+
     return jsonify({"status": "success", "data": drugs})
+
 
 @app.route('/api/electrolyte_impact', methods=['GET'])
 def get_electrolyte_impact():
     from sqlalchemy import text
-    analyte   = request.args.get('analyte',   '').strip()
-    keyword   = request.args.get('keyword',   '').strip()
+
+    analyte = request.args.get('analyte', '').strip()
+    keyword = request.args.get('keyword', '').strip()
     direction = request.args.get('direction', '').strip().upper()
 
-    sql = "SELECT record_type, drug_name, analyte, impact_direction, remarks, is_active FROM reference.electrolyte_impact WHERE 1=1"
+    sql = """
+        WITH normalized AS (
+            SELECT
+                TRIM(drug_name) AS drug_name,
+
+                CASE
+                    WHEN UPPER(TRIM(analyte)) IN ('NA', 'SODIUM') THEN 'Na'
+                    WHEN UPPER(TRIM(analyte)) IN ('K', 'POTASSIUM') THEN 'K'
+                    ELSE UPPER(TRIM(analyte))
+                END AS analyte,
+
+                CASE
+                    WHEN UPPER(TRIM(impact_direction)) IN ('E', 'UP', 'INCREASE', 'INCREASED', 'HIGHER', '上升', '升高') THEN 'E'
+                    WHEN UPPER(TRIM(impact_direction)) IN ('D', 'DOWN', 'DECREASE', 'DECREASED', 'LOWER', '下降', '降低') THEN 'D'
+                    ELSE UPPER(TRIM(impact_direction))
+                END AS impact_direction,
+
+                COALESCE(record_type::text, '') AS record_type,
+                COALESCE(remarks::text, '') AS remarks,
+                COALESCE(is_active::text, 'true') AS is_active
+            FROM reference.electrolyte_impact
+            WHERE drug_name IS NOT NULL
+    """
+
     params = {}
-    if analyte:   sql += " AND analyte = :analyte"; params['analyte']   = analyte
-    if direction: sql += " AND impact_direction = :direction"; params['direction'] = direction
-    if keyword:   sql += " AND drug_name ILIKE :kw"; params['kw']        = f'%{keyword}%'
-    sql += " ORDER BY drug_name, analyte"
+
+    if keyword:
+        sql += " AND TRIM(drug_name) ILIKE :kw"
+        params["kw"] = f"%{keyword}%"
+
+    sql += """
+        )
+        SELECT
+            MIN(record_type) AS record_type,
+            drug_name,
+            analyte,
+            impact_direction,
+            STRING_AGG(DISTINCT NULLIF(remarks, ''), '；') AS remarks,
+            TRUE AS is_active
+        FROM normalized
+        WHERE 1=1
+    """
+
+    if analyte:
+        norm_analyte = "Na" if analyte.upper() in ["NA", "SODIUM"] else "K" if analyte.upper() in ["K", "POTASSIUM"] else analyte.upper()
+        sql += " AND analyte = :analyte"
+        params["analyte"] = norm_analyte
+
+    if direction:
+        norm_direction = "E" if direction in ["E", "UP", "INCREASE", "INCREASED", "HIGHER", "上升", "升高"] else "D" if direction in ["D", "DOWN", "DECREASE", "DECREASED", "LOWER", "下降", "降低"] else direction
+        sql += " AND impact_direction = :direction"
+        params["direction"] = norm_direction
+
+    sql += """
+        GROUP BY drug_name, analyte, impact_direction
+        ORDER BY drug_name, analyte, impact_direction
+    """
 
     with db.engine.connect() as conn:
         result = conn.execute(text(sql), params)
         rows = [dict(r._mapping) for r in result]
-    return jsonify({"status": "success", "data": rows, "total": len(rows)})
+
+    return jsonify({
+        "status": "success",
+        "data": rows,
+        "total": len(rows)
+    })
+
 
 @app.route('/api/electrolyte_impact', methods=['POST'])
 def add_electrolyte_impact():
@@ -513,6 +658,71 @@ def delete_drug(drug_name):
     save_drugs(drugs)
     return jsonify({"status": "success", "message": f"「{drug_name}」已刪除"})
 
+@app.route('/api/drugs/<path:old_drug_name>', methods=['PUT'])
+def update_drug_adverse_info(old_drug_name):
+
+    data = request.get_json(silent=True) or {}
+
+    drug_name = (data.get('drug_name') or '').strip()
+    drug_code = (data.get('drug_code') or '').strip()
+
+    adverse_reaction = data.get('adverse_reaction') or ''
+    exception_handling = data.get('exception_handling') or ''
+
+    if not drug_name:
+        return jsonify({
+            "status": "error",
+            "message": "藥物名稱不可空白"
+        }), 400
+
+    sql = text("""
+
+        UPDATE reference.drug_adverse_info
+
+        SET
+            drug_name = :drug_name,
+            drug_code = :drug_code,
+            adverse_reaction = :adverse_reaction,
+            exception_handling = :exception_handling,
+            updated_at = CURRENT_TIMESTAMP
+
+        WHERE drug_name = :old_drug_name
+
+        RETURNING
+            drug_code AS id,
+            drug_name AS name,
+            adverse_reaction,
+            exception_handling
+
+    """)
+
+    row = db.session.execute(sql, {
+
+        "old_drug_name": old_drug_name,
+
+        "drug_name": drug_name,
+
+        "drug_code": drug_code,
+
+        "adverse_reaction": adverse_reaction,
+
+        "exception_handling": exception_handling
+
+    }).mappings().first()
+
+    db.session.commit()
+
+    if not row:
+        return jsonify({
+            "status": "error",
+            "message": "找不到該藥物"
+        }), 404
+
+    return jsonify({
+        "status": "success",
+        "data": dict(row)
+    })
+
 @app.route('/api/ref_ranges', methods=['GET'])
 def get_ref_ranges():
     rows = RefIonRange.query.order_by(RefIonRange.ion_type).all()
@@ -600,7 +810,7 @@ def handle_api_suggestions():
             )
             db.session.add(new_row)
             db.session.commit()
-            return jsonify({"status": "success", "message": "建議已成功同步", "data": new_row.to_dict()})
+            return jsonify({"status": "success", "message": "建議已成功提交", "data": new_row.to_dict()})
         except Exception as e:
             db.session.rollback()
             return jsonify({"status": "error", "message": f"寫入失敗: {str(e)}"}), 500
